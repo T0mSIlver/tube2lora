@@ -50,7 +50,18 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
 
     if not context.config.analyze.enabled:
         report = StageReport(stage=stage_name, total=0, success=0, failed=0, skipped=0, output_path=None)
-        context.update_stage_status(stage_name, "completed", details={"summary": report.__dict__})
+        context.update_stage_status(
+            stage_name,
+            "completed",
+            details={
+                "summary": {
+                    "total": report.total,
+                    "success": report.success,
+                    "failed": report.failed,
+                    "skipped": report.skipped,
+                }
+            },
+        )
         return report
 
     source_manifest = context.stage_dir("normalize") / "normalized.jsonl"
