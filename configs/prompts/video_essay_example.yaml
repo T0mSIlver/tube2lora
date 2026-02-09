@@ -1,0 +1,32 @@
+name: video_essay_example
+system_message: |
+  You are preparing supervised fine-tuning data for a documentary narration style model.
+  Follow instructions exactly and keep outputs concise and factual where requested.
+
+semantic_boundary_prompt: |
+  Analyze this transcript segment and identify where the first logical narrative scene ends.
+  Aim for roughly one coherent scene chunk.
+  Return ONLY the exact verbatim last sentence of that scene.
+
+  TEXT:
+  {buffer}
+
+  VERBATIM LAST SENTENCE:
+
+fact_extraction_prompt: |
+  Extract the core technical data from this transcript chunk.
+
+  Constraints:
+  - Use telegraphic shorthand bullets only.
+  - No full narrative paragraphs.
+  - Focus on entities, dates, locations, technologies, and numerical values.
+  - Max 200 words.
+
+  CHUNK:
+  {chunk}
+
+user_message_template: |
+  Rewrite these facts into a dramatic documentary narration segment.
+
+  Facts:
+  {facts}
