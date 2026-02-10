@@ -21,7 +21,11 @@ from tube2lora.utils.text_metrics import (
     safe_ratio,
 )
 
-GENERATE_SCHEMA_VERSION = "v2"
+GENERATE_SCHEMA_VERSION = "v3"
+SEMANTIC_BOUNDARY_START = "<<<SCENE_END_SENTENCE_START>>>"
+SEMANTIC_BOUNDARY_END = "<<<SCENE_END_SENTENCE_END>>>"
+FACTS_BLOCK_START = "<<<FACTS_START>>>"
+FACTS_BLOCK_END = "<<<FACTS_END>>>"
 
 
 def _clean_closing_sentence(raw: str) -> str:
@@ -39,6 +43,48 @@ def _clean_closing_sentence(raw: str) -> str:
         candidate = updated
 
     return " ".join(candidate.split())
+
+
+def _extract_delimited_block(raw: str, *, start: str, end: str, label: str) -> str:
+    start_idx = raw.find(start)
+    if start_idx < 0:
+        raise RuntimeError(f"{label} response missing start separator")
+    body_start = start_idx + len(start)
+    end_idx = raw.find(end, body_start)
+    if end_idx < 0:
+        raise RuntimeError(f"{label} response missing end separator")
+    extracted = raw[body_start:end_idx].strip()
+    if not extracted:
+        raise RuntimeError(f"{label} response between separators is empty")
+    return extracted
+
+
+def _extract_boundary_sentence(raw: str) -> str:
+    boundary = _extract_delimited_block(
+        raw,
+        start=SEMANTIC_BOUNDARY_START,
+        end=SEMANTIC_BOUNDARY_END,
+        label="semantic boundary",
+    )
+    sentence = _clean_closing_sentence(boundary)
+    if not sentence:
+        raise RuntimeError("semantic boundary sentence is empty after cleanup")
+    return sentence
+
+
+def _extract_facts_block(raw: str) -> str:
+    facts = _extract_delimited_block(
+        raw,
+        start=FACTS_BLOCK_START,
+        end=FACTS_BLOCK_END,
+        label="facts",
+    )
+    lines = [line.strip() for line in facts.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError("facts response is empty after cleanup")
+    if not any(line.startswith(("-", "*")) for line in lines):
+        raise RuntimeError("facts response must contain bullet lines")
+    return "\n".join(lines)
 
 
 def _find_verbatim_index(buffer: str, closing_sentence: str) -> int:
@@ -133,7 +179,7 @@ def _semantic_chunks(
                 title=title,
                 video_id=video_id,
             )
-            boundary = client.complete(
+            boundary_raw = client.complete(
                 ChatRequest(
                     model=model,
                     system_prompt=system_message,
@@ -142,7 +188,7 @@ def _semantic_chunks(
                     max_tokens=max_tokens,
                 )
             )
-            closing_sentence = _clean_closing_sentence(boundary)
+            closing_sentence = _extract_boundary_sentence(boundary_raw)
             cut_point = _find_verbatim_index(buffer, closing_sentence) if closing_sentence else -1
         except Exception:
             cut_point = -1
@@ -195,9 +241,15 @@ def _extract_metrics_from_row(row: dict[str, object]) -> dict[str, object]:
     if status == "ready":
         return {
             "num_entries": int(row.get("num_entries", 0)),
+            "num_source_chunks": int(row.get("num_source_chunks", 0)),
+            "num_dropped_chunks": int(row.get("num_dropped_chunks", 0)),
         }
     if status == "skipped":
-        return {"skip_reason": row.get("skip_reason", "unknown")}
+        return {
+            "skip_reason": row.get("skip_reason", "unknown"),
+            "num_source_chunks": int(row.get("num_source_chunks", 0)),
+            "num_dropped_chunks": int(row.get("num_dropped_chunks", 0)),
+        }
     if status == "failed":
         return {"error": row.get("error", "unknown")}
     return {}
@@ -324,70 +376,108 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
             user_token_counts: list[int] = []
             facts_token_counts: list[int] = []
             chunk_token_counts: list[int] = []
+            dropped_chunks = 0
             system_token_count = count_tokens(
                 prompt_template.system_message.strip(),
                 model=context.config.generate.model,
             )
             for chunk_idx, chunk in enumerate(chunks):
-                facts_prompt = prompt_template.fact_extraction_prompt.format(
-                    chunk=chunk,
-                    title=title,
-                    video_id=video_id,
-                )
-                facts = client.complete(
-                    ChatRequest(
-                        model=context.config.generate.model,
-                        system_prompt=prompt_template.system_message,
-                        user_prompt=facts_prompt,
-                        temperature=context.config.generate.temperature,
-                        max_tokens=context.config.generate.max_tokens,
+                try:
+                    facts_prompt = prompt_template.fact_extraction_prompt.format(
+                        chunk=chunk,
+                        title=title,
+                        video_id=video_id,
                     )
-                )
-
-                user_message = prompt_template.user_message_template.format(
-                    facts=facts,
-                    title=title,
-                    video_id=video_id,
-                    chunk_index=chunk_idx,
-                )
-
-                chunk_tokens = count_tokens(chunk, model=context.config.generate.model)
-                assistant_tokens = chunk_tokens
-                user_tokens = count_tokens(user_message, model=context.config.generate.model)
-                facts_tokens = count_tokens(facts, model=context.config.generate.model)
-
-                assistant_token_counts.append(assistant_tokens)
-                user_token_counts.append(user_tokens)
-                facts_token_counts.append(facts_tokens)
-                chunk_token_counts.append(chunk_tokens)
-
-                messages: list[dict[str, str]] = []
-                if prompt_template.system_message.strip():
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": prompt_template.system_message.strip(),
-                        }
+                    facts_raw = client.complete(
+                        ChatRequest(
+                            model=context.config.generate.model,
+                            system_prompt=prompt_template.system_message,
+                            user_prompt=facts_prompt,
+                            temperature=context.config.generate.temperature,
+                            max_tokens=context.config.generate.max_tokens,
+                        )
                     )
-                messages.append({"role": "user", "content": user_message})
-                messages.append({"role": "assistant", "content": chunk})
+                    facts = _extract_facts_block(facts_raw)
 
-                entry = {
-                    "messages": messages,
-                    "metadata": {
-                        "video_id": video_id,
-                        "title": title,
-                        "chunk_index": chunk_idx,
-                        "source_len": len(chunk),
-                        "source_token_count": chunk_tokens,
-                        "facts": facts,
-                        "facts_token_count": facts_tokens,
-                        "user_token_count": user_tokens,
-                        "assistant_token_count": assistant_tokens,
-                        "system_token_count": system_token_count,
+                    user_message = prompt_template.user_message_template.format(
+                        facts=facts,
+                        title=title,
+                        video_id=video_id,
+                        chunk_index=chunk_idx,
+                    )
+
+                    chunk_tokens = count_tokens(chunk, model=context.config.generate.model)
+                    assistant_tokens = chunk_tokens
+                    user_tokens = count_tokens(user_message, model=context.config.generate.model)
+                    facts_tokens = count_tokens(facts, model=context.config.generate.model)
+
+                    assistant_token_counts.append(assistant_tokens)
+                    user_token_counts.append(user_tokens)
+                    facts_token_counts.append(facts_tokens)
+                    chunk_token_counts.append(chunk_tokens)
+
+                    messages: list[dict[str, str]] = []
+                    if prompt_template.system_message.strip():
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": prompt_template.system_message.strip(),
+                            }
+                        )
+                    messages.append({"role": "user", "content": user_message})
+                    messages.append({"role": "assistant", "content": chunk})
+
+                    entry = {
+                        "messages": messages,
+                        "metadata": {
+                            "video_id": video_id,
+                            "title": title,
+                            "chunk_index": chunk_idx,
+                            "source_len": len(chunk),
+                            "source_token_count": chunk_tokens,
+                            "facts": facts,
+                            "facts_token_count": facts_tokens,
+                            "user_token_count": user_tokens,
+                            "assistant_token_count": assistant_tokens,
+                            "system_token_count": system_token_count,
+                        },
+                    }
+                    video_entries.append(entry)
+                except Exception as chunk_exc:
+                    dropped_chunks += 1
+                    logger.warning(
+                        "Generate chunk skipped for %s (%s), chunk=%d: %s",
+                        video_id,
+                        title,
+                        chunk_idx,
+                        chunk_exc,
+                    )
+                    continue
+
+            if not video_entries:
+                out_row = {
+                    "video_id": video_id,
+                    "title": title,
+                    "status": "skipped",
+                    "skip_reason": "no_valid_chunks",
+                    "num_source_chunks": len(chunks),
+                    "num_dropped_chunks": dropped_chunks,
+                    "metrics": {
+                        "skip_reason": "no_valid_chunks",
+                        "num_source_chunks": len(chunks),
+                        "num_dropped_chunks": dropped_chunks,
                     },
                 }
-                video_entries.append(entry)
+                output_rows.append(out_row)
+                manifest.mark(
+                    video_id,
+                    status="skipped",
+                    input_hash=input_hash,
+                    output=out_row,
+                    skipped_reason="no_valid_chunks",
+                )
+                skipped += 1
+                continue
 
             video_entries_path = per_video_dir / f"{video_id}.jsonl"
             write_jsonl(video_entries_path, video_entries)
@@ -408,9 +498,12 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "status": "ready",
                 "entries_path": str(video_entries_path),
                 "num_entries": len(video_entries),
+                "num_source_chunks": len(chunks),
+                "num_dropped_chunks": dropped_chunks,
                 "metrics": {
                     "num_entries": len(video_entries),
                     "num_source_chunks": len(chunks),
+                    "num_dropped_chunks": dropped_chunks,
                     "source_num_chars": len(transcript_text),
                     "source_word_count": source_word_count,
                     "source_token_count": source_token_count,

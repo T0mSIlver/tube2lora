@@ -6,12 +6,16 @@ system_message: |
 semantic_boundary_prompt: |
   Analyze this transcript segment and identify where the first logical narrative scene ends.
   Aim for roughly one coherent scene chunk.
-  Return ONLY the exact verbatim last sentence of that scene.
+  Return ONLY the exact verbatim last sentence of that scene between the separators below.
+  Do not add commentary.
+
+  Required output format:
+  <<<SCENE_END_SENTENCE_START>>>
+  <exact sentence copied from TEXT>
+  <<<SCENE_END_SENTENCE_END>>>
 
   TEXT:
   {buffer}
-
-  VERBATIM LAST SENTENCE:
 
 fact_extraction_prompt: |
   Extract the core technical data from this transcript chunk.
@@ -21,6 +25,14 @@ fact_extraction_prompt: |
   - No full narrative paragraphs.
   - Focus on entities, dates, locations, technologies, and numerical values.
   - Max 200 words.
+  - Return ONLY bullet lines between the separators below.
+  - Do not add commentary or markdown headers.
+
+  Required output format:
+  <<<FACTS_START>>>
+  - bullet
+  - bullet
+  <<<FACTS_END>>>
 
   CHUNK:
   {chunk}
