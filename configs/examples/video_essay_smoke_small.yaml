@@ -1,5 +1,5 @@
-# BlackFiles-style config based on legacy scripts.
-# For smoke testing, input is currently pinned to one video.
+# Smoke config derived from configs/video_essay.yaml
+# Uses legacy endpoint/model values, single test video, and small Whisper.
 
 input:
   source_type: video
@@ -19,9 +19,7 @@ transcribe:
   allow_auto_generated: false
   language_allowlist: ["en"]
   faster_whisper:
-    # Smoke default on this machine; lower VRAM than large-v3.
-    # Switch to "small" for even lighter runs.
-    model_size: "distil-large-v3"
+    model_size: "small"
     device: cuda
     compute_type: auto
     beam_size: 5
@@ -34,35 +32,32 @@ transcribe:
     batch_size: 4
 
 llm:
-  # Legacy process_transcripts.py API base.
   base_url: "http://192.168.1.17:8000/v1"
   api_key_env: "OPENAI_API_KEY"
   timeout_seconds: 120
   max_retries: 3
 
 normalize:
-  enabled: true
-  prompt_template: "prompts/normalize_default.yaml"
-  # Legacy process_transcripts.py model.
+  enabled: false
+  prompt_template: "../prompts/normalize_default.yaml"
   model: "mistralai/Ministral-3-14B-Instruct-2512"
   temperature: 0.1
   max_tokens: 4096
 
 analyze:
-  enabled: true
+  enabled: false
   minhash_num_perm: 128
 
 filter:
-  enabled: true
+  enabled: false
   min_words: 100
   language_allowlist: ["en"]
   dedup_threshold: 0.85
   min_quality_score: 0.2
 
 generate:
-  enabled: true
-  prompt_template: "prompts/video_essay_example.yaml"
-  # Legacy process_transcripts.py model.
+  enabled: false
+  prompt_template: "../prompts/video_essay_example.yaml"
   model: "mistralai/Ministral-3-14B-Instruct-2512"
   temperature: 0.1
   max_tokens: 4096
@@ -72,12 +67,11 @@ generate:
   min_tail_chars: 800
 
 train:
-  enabled: true
-  # Legacy unsloth scripts baseline.
+  enabled: false
   base_model: "unsloth/Ministral-3-3B-Instruct-2512"
   load_in_4bit: true
   max_seq_length: 16384
-  output_name: "blackfiles_ministral3b_exp4_style"
+  output_name: "smoke_small_adapter"
   lora_r: 64
   lora_alpha: 64
   lora_dropout: 0.05
@@ -85,7 +79,7 @@ train:
   per_device_train_batch_size: 2
   gradient_accumulation_steps: 4
   warmup_steps: 15
-  num_train_epochs: 4
+  num_train_epochs: 1
   learning_rate: 1.0e-4
   weight_decay: 0.01
   lr_scheduler_type: "cosine"
@@ -97,9 +91,9 @@ train:
   eval_split_ratio: 0.1
 
 evaluate:
-  enabled: true
-  num_generation_samples: 3
-  max_new_tokens: 200
+  enabled: false
+  num_generation_samples: 1
+  max_new_tokens: 128
   temperature: 0.7
 
 pipeline:
@@ -107,4 +101,4 @@ pipeline:
   max_failure_rate: 0.2
 
 paths:
-  runs_dir: "../runs"
+  runs_dir: "../../runs"

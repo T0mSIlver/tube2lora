@@ -1,0 +1,284 @@
+# tube2lora configuration reference
+# This file is intentionally verbose and fully commented.
+# Copy it and edit values for your environment.
+
+input:
+  # Where to read videos from.
+  # Allowed values:
+  # - channel: YouTube channel URL
+  # - playlist: YouTube playlist URL
+  # - video: single YouTube video URL
+  # - url_file: local text file (one URL per line)
+  source_type: channel
+
+  # The source matching source_type.
+  # Examples:
+  # - channel: "https://www.youtube.com/@Blackfiles-HD"
+  # - playlist: "https://www.youtube.com/playlist?list=..."
+  # - video: "https://www.youtube.com/watch?v=9eRoYGhiDms"
+  # - url_file: "./urls.txt"
+  source: "https://www.youtube.com/@Blackfiles-HD"
+
+download:
+  # Include YouTube Shorts in discovery.
+  # Default false because short-form transcripts tend to be noisy.
+  include_shorts: false
+
+  # Include live streams / past live videos.
+  # Default false because these are often long and lower quality for SFT.
+  include_live: false
+
+  # Media to download during the download stage.
+  # Allowed values:
+  # - audio: download audio only (recommended for text pipeline)
+  # - video: download full video + audio
+  # - none: metadata-only (no media download)
+  media: audio
+
+  # Reserved for future behavior around retaining source video files.
+  # Keep false for text-only workflows.
+  keep_video: false
+
+  # yt-dlp format selector when media=audio.
+  yt_dlp_audio_format: "bestaudio/best"
+
+  # yt-dlp format selector when media=video.
+  yt_dlp_video_format: "bestvideo+bestaudio/best"
+
+transcribe:
+  # Transcription backend implementation.
+  # Allowed values:
+  # - faster_whisper: local Faster-Whisper inference
+  # - voxtral: local Voxtral/transformers backend
+  # - youtube_native: only use YouTube native transcripts
+  backend: faster_whisper
+
+  # If true, try creator-provided manual YouTube transcript first.
+  # If found and language is allowed, it is used instead of ASR.
+  prefer_manual_transcript: true
+
+  # Allow YouTube auto-generated transcripts as fallback.
+  # Default false because quality is typically below Whisper/Voxtral.
+  allow_auto_generated: false
+
+  # Keep only transcript languages in this list.
+  # If manual transcript language is outside this allowlist, video is skipped.
+  language_allowlist: ["en"]
+
+  faster_whisper:
+    # Whisper model string passed directly to faster-whisper.
+    # Common values:
+    # - "distil-large-v3" (good quality/speed on GPU)
+    # - "small" (lighter/faster smoke tests)
+    # - "large-v3" (highest quality, more VRAM)
+    model_size: "distil-large-v3"
+
+    # Device selection.
+    # Allowed values: auto, cpu, cuda
+    device: auto
+
+    # Compute type for faster-whisper.
+    # Use "auto" in most cases.
+    # Examples: auto, float16, int8
+    compute_type: auto
+
+    # Beam size used by ASR decoding.
+    beam_size: 5
+
+    # Voice activity detection filtering.
+    # True removes silence segments and usually improves transcript quality.
+    vad_filter: true
+
+  voxtral:
+    # HF model name for Voxtral ASR backend.
+    model_name: "mistralai/Voxtral-Mini-4B-Realtime-2602"
+
+    # Device selection for transformers pipeline.
+    # Allowed values: auto, cpu, cuda
+    device: auto
+
+    # Torch dtype.
+    # Allowed values: auto, float16, bfloat16, float32
+    torch_dtype: auto
+
+    # Audio chunk size in seconds for pipeline streaming/chunking.
+    chunk_length_s: 30
+
+    # Batch size for chunk inference.
+    batch_size: 4
+
+llm:
+  # Base URL for OpenAI-compatible chat endpoint.
+  # Used by normalize + generate stages only.
+  base_url: "http://127.0.0.1:8000/v1"
+
+  # Environment variable holding API key for the endpoint.
+  # For local servers, this can point to a dummy key var if auth is disabled.
+  api_key_env: "OPENAI_API_KEY"
+
+  # Per-request timeout in seconds.
+  timeout_seconds: 120
+
+  # Retries for transient API/network failures.
+  max_retries: 3
+
+normalize:
+  # Whether to run transcript normalization stage.
+  enabled: true
+
+  # Path to YAML prompt template for normalization.
+  # Path is resolved relative to this config file.
+  prompt_template: "configs/prompts/normalize_default.yaml"
+
+  # LLM model name for normalization pass.
+  model: "mistralai/Ministral-3-14B-Instruct-2512"
+
+  # Sampling temperature for normalization.
+  temperature: 0.1
+
+  # Max completion tokens for normalization response.
+  max_tokens: 4096
+
+analyze:
+  # Whether to run transcript metrics stage.
+  enabled: true
+
+  # Number of hash permutations used for MinHash signatures.
+  minhash_num_perm: 128
+
+filter:
+  # Whether to run filtering stage.
+  enabled: true
+
+  # Minimum words required to keep a sample.
+  min_words: 100
+
+  # Allowed languages after analyze stage.
+  language_allowlist: ["en"]
+
+  # Jaccard similarity threshold for MinHash dedup.
+  # >= threshold is treated as duplicate.
+  dedup_threshold: 0.85
+
+  # Minimum heuristic quality score in [0, 1].
+  min_quality_score: 0.2
+
+generate:
+  # Whether to run dataset generation stage.
+  enabled: true
+
+  # Path to YAML prompt template for generation.
+  # Path is resolved relative to this config file.
+  prompt_template: "configs/prompts/video_essay_example.yaml"
+
+  # LLM model used for semantic chunking + fact extraction.
+  model: "mistralai/Ministral-3-14B-Instruct-2512"
+
+  # Sampling temperature for generation helper calls.
+  temperature: 0.1
+
+  # Max completion tokens for generation helper calls.
+  max_tokens: 4096
+
+  # Character window for semantic boundary scan.
+  buffer_chars: 7000
+
+  # Fallback chunking lower bound when semantic boundary fails.
+  fallback_min_chars: 2500
+
+  # Fallback chunking upper bound when semantic boundary fails.
+  fallback_max_chars: 3500
+
+  # If remaining tail is below this size, include it as final chunk and stop.
+  min_tail_chars: 800
+
+train:
+  # Whether to run training stage.
+  enabled: true
+
+  # Base model for LoRA fine-tuning.
+  base_model: "unsloth/Ministral-3-3B-Instruct-2512"
+
+  # QLoRA flag; true means load base model in 4-bit.
+  load_in_4bit: true
+
+  # Maximum sequence length for tokenizer/trainer.
+  max_seq_length: 16384
+
+  # Output adapter directory name under run artifacts.
+  output_name: "ministral3b_tube2lora_adapter"
+
+  # LoRA rank.
+  lora_r: 64
+
+  # LoRA alpha.
+  lora_alpha: 64
+
+  # LoRA dropout.
+  lora_dropout: 0.05
+
+  # Rank-stabilized LoRA.
+  use_rslora: true
+
+  # Effective batch = per_device_train_batch_size * gradient_accumulation_steps * num_gpus.
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+
+  # Warmup steps.
+  warmup_steps: 15
+
+  # Epoch count.
+  num_train_epochs: 4
+
+  # Learning rate.
+  learning_rate: 1.0e-4
+
+  # Weight decay.
+  weight_decay: 0.01
+
+  # LR scheduler name used by trainer.
+  lr_scheduler_type: "cosine"
+
+  # Logging frequency (steps).
+  logging_steps: 5
+
+  # Checkpoint save frequency (steps).
+  save_steps: 50
+
+  # Dataset map workers.
+  dataset_num_proc: 2
+
+  # Sequence packing for short samples.
+  packing: false
+
+  # Random seed.
+  seed: 3407
+
+  # Holdout split ratio at video level (not chunk level).
+  eval_split_ratio: 0.1
+
+evaluate:
+  # Whether to run evaluation stage.
+  enabled: true
+
+  # Number of generation samples to emit (if generation eval path is active).
+  num_generation_samples: 3
+
+  # Max generation length for sample outputs.
+  max_new_tokens: 200
+
+  # Sampling temperature for generation samples.
+  temperature: 0.7
+
+pipeline:
+  # If true, continue to later stages after non-threshold failures.
+  continue_on_error: true
+
+  # Abort stage when failed/total exceeds this ratio.
+  # Example: 0.2 means abort if more than 20% fail.
+  max_failure_rate: 0.2
+
+paths:
+  # Base directory for run outputs.
+  # Each run creates runs/<timestamp>_<config_hash>/
+  runs_dir: "runs"
