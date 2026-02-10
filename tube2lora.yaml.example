@@ -117,8 +117,21 @@ normalize:
   # Sampling temperature for normalization.
   temperature: 0.1
 
-  # Max completion tokens for normalization response.
+  # Max completion tokens PER CHUNK response.
+  # Keep this fairly high for reasoning-capable models.
   max_tokens: 4096
+
+  # Approximate target chunk size (in source transcript characters).
+  # The normalizer always runs chunk-by-chunk; no single-shot mode.
+  chunk_target_chars: 3500
+
+  # Optional source-text overlap between adjacent chunks.
+  # Use 0 to disable overlap and avoid duplicate boundaries.
+  chunk_overlap_chars: 0
+
+  # Safety ceiling for a single chunk size.
+  # Must be >= chunk_target_chars.
+  chunk_hard_max_chars: 5500
 
 analyze:
   # Whether to run transcript metrics stage.
@@ -134,6 +147,10 @@ filter:
   # Minimum words required to keep a sample.
   min_words: 100
 
+  # Minimum token count (tiktoken) required to keep a sample.
+  # This is usually a better floor than raw word count.
+  min_tokens: 120
+
   # Allowed languages after analyze stage.
   language_allowlist: ["en"]
 
@@ -143,6 +160,14 @@ filter:
 
   # Minimum heuristic quality score in [0, 1].
   min_quality_score: 0.2
+
+  # Normalization QA guardrails (computed in normalize stage metrics).
+  # Disable any check by setting the value to null.
+  normalize_min_token_ratio: 0.7
+  normalize_max_token_ratio: 1.35
+  normalize_min_length_ratio: 0.7
+  normalize_max_length_ratio: 1.35
+  normalize_min_similarity: 0.65
 
 generate:
   # Whether to run dataset generation stage.

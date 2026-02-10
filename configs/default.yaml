@@ -50,6 +50,9 @@ normalize:
   model: "mistralai/Ministral-3-14B-Instruct-2512"
   temperature: 0.1
   max_tokens: 4096
+  chunk_target_chars: 3500
+  chunk_overlap_chars: 0
+  chunk_hard_max_chars: 5500
 
 analyze:
   enabled: true
@@ -58,9 +61,15 @@ analyze:
 filter:
   enabled: true
   min_words: 100
+  min_tokens: 120
   language_allowlist: ["en"]
   dedup_threshold: 0.85
   min_quality_score: 0.2
+  normalize_min_token_ratio: 0.7
+  normalize_max_token_ratio: 1.35
+  normalize_min_length_ratio: 0.7
+  normalize_max_length_ratio: 1.35
+  normalize_min_similarity: 0.65
 
 generate:
   enabled: true

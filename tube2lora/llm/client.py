@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from openai import APIConnectionError, APIStatusError, OpenAI
 
@@ -22,11 +24,33 @@ class OpenAIChatClient:
     def __init__(self, endpoint: LLMEndpointConfig):
         api_key = os.environ.get(endpoint.api_key_env, "dummy")
         self.endpoint = endpoint
+        self.logger = logging.getLogger("tube2lora.llm")
         self.client = OpenAI(
             api_key=api_key,
             base_url=endpoint.base_url,
             timeout=float(endpoint.timeout_seconds),
         )
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    if part.strip():
+                        parts.append(part.strip())
+                    continue
+                if not isinstance(part, dict):
+                    continue
+                text_value = part.get("text")
+                if isinstance(text_value, str) and text_value.strip():
+                    parts.append(text_value.strip())
+            return "\n".join(parts).strip()
+        return str(content).strip()
 
     def complete(self, request: ChatRequest) -> str:
         last_error: Exception | None = None
@@ -42,10 +66,24 @@ class OpenAIChatClient:
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                 )
-                content = response.choices[0].message.content
-                if content is None:
+                if not response.choices:
                     return ""
-                return str(content).strip()
+
+                choice = response.choices[0]
+                message = choice.message
+                finish_reason = getattr(choice, "finish_reason", None)
+                # Ignore any provider-specific reasoning payload.
+                _ = getattr(message, "reasoning_content", None)
+                content_text = self._content_to_text(getattr(message, "content", None))
+                if not content_text and finish_reason == "length":
+                    self.logger.warning(
+                        "LLM returned empty content with finish_reason='length' "
+                        "(model=%s, max_tokens=%d). "
+                        "This can mean max_tokens is too low; consider increasing it.",
+                        request.model,
+                        request.max_tokens,
+                    )
+                return content_text
             except (APIStatusError, APIConnectionError, TimeoutError) as exc:
                 last_error = exc
                 if attempt == self.endpoint.max_retries - 1:

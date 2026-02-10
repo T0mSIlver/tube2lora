@@ -125,6 +125,34 @@ def _download_media(
     return candidates[0]
 
 
+def _as_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_metrics_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    metrics = row.get("metrics")
+    if isinstance(metrics, dict):
+        return metrics
+
+    status = str(row.get("status", "unknown"))
+    if status == "ready":
+        media_path = row.get("media_path")
+        return {
+            "duration_seconds": _as_float(row.get("duration")),
+            "has_media": bool(media_path),
+        }
+    if status == "skipped":
+        return {"skip_reason": row.get("skip_reason", "unknown")}
+    if status == "failed":
+        return {"error": row.get("error", "unknown")}
+    return {}
+
+
 def run(context: RunContext, logger: logging.Logger) -> StageReport:
     stage_name = "download"
     context.update_stage_status(stage_name, "running")
@@ -134,6 +162,7 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
     media_dir = artifact_dir / "media"
     manifest = ManifestStore(context.stage_manifest_path(stage_name))
     output_manifest_path = stage_dir / "videos.jsonl"
+    metrics_manifest_path = stage_dir / "metrics.jsonl"
 
     source_urls = _read_source_urls(context.config.input.source_type, context.config.input.source)
     raw_entries = _collect_video_entries(source_urls, logger)
@@ -185,6 +214,12 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "live_status": entry.get("live_status"),
                 "status": "skipped",
                 "skip_reason": "short_excluded",
+                "metrics": {
+                    "skip_reason": "short_excluded",
+                    "duration_seconds": _as_float(duration),
+                    "is_short": True,
+                    "is_live": live,
+                },
             }
             rows.append(row)
             manifest.mark(video_id, status="skipped", input_hash=input_hash, output=row, skipped_reason="short_excluded")
@@ -200,6 +235,12 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "live_status": entry.get("live_status"),
                 "status": "skipped",
                 "skip_reason": "live_excluded",
+                "metrics": {
+                    "skip_reason": "live_excluded",
+                    "duration_seconds": _as_float(duration),
+                    "is_short": short,
+                    "is_live": True,
+                },
             }
             rows.append(row)
             manifest.mark(video_id, status="skipped", input_hash=input_hash, output=row, skipped_reason="live_excluded")
@@ -220,6 +261,20 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 if downloaded is not None:
                     media_path = str(downloaded)
 
+            media_size_bytes = None
+            if media_path:
+                media_file = Path(media_path)
+                if media_file.exists() and media_file.is_file():
+                    media_size_bytes = media_file.stat().st_size
+
+            metrics = {
+                "duration_seconds": _as_float(duration),
+                "is_short": short,
+                "is_live": live,
+                "has_media": bool(media_path),
+                "media_size_bytes": media_size_bytes,
+            }
+
             row = {
                 "video_id": video_id,
                 "title": title,
@@ -231,6 +286,7 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "upload_date": entry.get("upload_date"),
                 "status": "ready",
                 "media_path": media_path,
+                "metrics": metrics,
             }
             rows.append(row)
             manifest.mark(video_id, status="success", input_hash=input_hash, output=row)
@@ -243,6 +299,9 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "url": url,
                 "status": "failed",
                 "error": str(exc),
+                "metrics": {
+                    "error": str(exc),
+                },
             }
             rows.append(row)
             manifest.mark(video_id, status="failed", input_hash=input_hash, output=row, error=str(exc))
@@ -254,6 +313,19 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
     else:
         rows.sort(key=lambda r: (str(r.get("status", "")), str(r.get("video_id", ""))))
         write_jsonl(output_manifest_path, rows)
+
+    write_jsonl(
+        metrics_manifest_path,
+        [
+            {
+                "video_id": row.get("video_id"),
+                "title": row.get("title"),
+                "status": row.get("status"),
+                "metrics": _extract_metrics_from_row(row),
+            }
+            for row in rows
+        ],
+    )
 
     report = StageReport(
         stage=stage_name,
@@ -274,6 +346,7 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "skipped": report.skipped,
             },
             "output_path": str(output_manifest_path),
+            "metrics_path": str(metrics_manifest_path),
         },
     )
     return report

@@ -17,6 +17,9 @@ from tube2lora.transcribe.backends import (
 )
 from tube2lora.utils.hashing import sha256_file, stable_dict_hash
 from tube2lora.utils.io import atomic_write_json, atomic_write_text, iter_jsonl, write_jsonl
+from tube2lora.utils.text_metrics import count_sentences, count_tokens, count_words
+
+TRANSCRIBE_SCHEMA_VERSION = "v2"
 
 
 def _select_backend(context: RunContext, logger: logging.Logger) -> Transcriber | None:
@@ -79,6 +82,29 @@ def _serialize_transcript(result: TranscriptionResult) -> dict[str, Any]:
     }
 
 
+def _extract_metrics_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    metrics = row.get("metrics")
+    if isinstance(metrics, dict):
+        return metrics
+
+    status = str(row.get("status", "unknown"))
+    if status == "ready":
+        return {
+            "source": row.get("source"),
+            "language": row.get("language"),
+            "num_segments": int(row.get("num_segments", 0)),
+            "num_chars": int(row.get("num_chars", 0)),
+        }
+    if status == "skipped":
+        return {
+            "skip_reason": row.get("skip_reason", "unknown"),
+            "language": row.get("language"),
+        }
+    if status == "failed":
+        return {"error": row.get("error", "unknown")}
+    return {}
+
+
 def run(context: RunContext, logger: logging.Logger) -> StageReport:
     stage_name = "transcribe"
     context.update_stage_status(stage_name, "running")
@@ -96,6 +122,7 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
     artifact_dir = context.stage_artifact_dir(stage_name)
     audio_cache_dir = artifact_dir / "audio"
     output_manifest_path = stage_dir / "transcripts.jsonl"
+    metrics_manifest_path = stage_dir / "metrics.jsonl"
     manifest = ManifestStore(context.stage_manifest_path(stage_name))
 
     transcriber = _select_backend(context, logger)
@@ -119,6 +146,7 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
 
         input_hash = stable_dict_hash(
             {
+                "schema": TRANSCRIBE_SCHEMA_VERSION,
                 "video_id": video_id,
                 "url": url,
                 "title": title,
@@ -155,6 +183,10 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                             "status": "skipped",
                             "skip_reason": "language_filtered_manual_transcript",
                             "language": yt_result.language,
+                            "metrics": {
+                                "skip_reason": "language_filtered_manual_transcript",
+                                "language": yt_result.language,
+                            },
                         }
                         output_rows.append(out_row)
                         manifest.mark(
@@ -177,6 +209,9 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                         "url": url,
                         "status": "skipped",
                         "skip_reason": "no_manual_transcript_and_backend_is_youtube_native",
+                        "metrics": {
+                            "skip_reason": "no_manual_transcript_and_backend_is_youtube_native",
+                        },
                     }
                     output_rows.append(out_row)
                     manifest.mark(
@@ -208,6 +243,10 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                     "status": "skipped",
                     "skip_reason": "language_filtered",
                     "language": transcript_result.language,
+                    "metrics": {
+                        "skip_reason": "language_filtered",
+                        "language": transcript_result.language,
+                    },
                 }
                 output_rows.append(out_row)
                 manifest.mark(
@@ -226,6 +265,23 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
             atomic_write_json(json_path, serialized)
             atomic_write_text(txt_path, serialized["text"] + "\n")
 
+            segment_lengths = [len(str(seg.get("text", ""))) for seg in serialized["segments"]]
+            metrics = {
+                "source": serialized["source"],
+                "language": serialized["language"],
+                "num_segments": len(serialized["segments"]),
+                "num_chars": len(serialized["text"]),
+                "token_count": count_tokens(
+                    serialized["text"],
+                    model=context.config.normalize.model,
+                ),
+                "word_count": count_words(serialized["text"]),
+                "sentence_count": count_sentences(serialized["text"]),
+                "avg_segment_chars": (
+                    sum(segment_lengths) / len(segment_lengths) if segment_lengths else 0.0
+                ),
+            }
+
             out_row = {
                 "video_id": video_id,
                 "title": title,
@@ -237,6 +293,7 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "language": serialized["language"],
                 "num_segments": len(serialized["segments"]),
                 "num_chars": len(serialized["text"]),
+                "metrics": metrics,
             }
             output_rows.append(out_row)
             manifest.mark(video_id, status="success", input_hash=input_hash, output=out_row)
@@ -249,6 +306,9 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "url": url,
                 "status": "failed",
                 "error": str(exc),
+                "metrics": {
+                    "error": str(exc),
+                },
             }
             output_rows.append(out_row)
             manifest.mark(video_id, status="failed", input_hash=input_hash, output=out_row, error=str(exc))
@@ -256,6 +316,18 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
 
     output_rows.sort(key=lambda item: str(item.get("video_id", "")))
     write_jsonl(output_manifest_path, output_rows)
+    write_jsonl(
+        metrics_manifest_path,
+        [
+            {
+                "video_id": row.get("video_id"),
+                "title": row.get("title"),
+                "status": row.get("status"),
+                "metrics": _extract_metrics_from_row(row),
+            }
+            for row in output_rows
+        ],
+    )
 
     report = StageReport(
         stage=stage_name,
@@ -276,6 +348,7 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "skipped": report.skipped,
             },
             "output_path": str(output_manifest_path),
+            "metrics_path": str(metrics_manifest_path),
         },
     )
     return report

@@ -19,6 +19,11 @@ It is designed for resumability, per-stage caching, and reproducible per-run art
 - Per-item manifests for cache + resume behavior
 - New run directory on config/prompt hash change
 - OpenAI-compatible LLM client for normalization + dataset generation
+- Chunked normalization (segment-aware) to reduce rewrite drift and token pressure
+- Per-stage metrics emission (`stages/<stage>/metrics.jsonl`)
+- Unified per-video analysis profile (`stages/analyze/profiles.jsonl`) used by `filter`
+- Token-aware NLP metrics (`tiktoken` + readability/lexical features)
+- Generate-stage dataset quality metrics (per-message token accounting)
 - Transcriber protocol with backends:
   - `faster_whisper`
   - `youtube_native`

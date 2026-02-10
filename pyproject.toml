@@ -23,6 +23,8 @@ dependencies = [
   "faster-whisper>=1.1.0",
   "langdetect>=1.0.9",
   "datasketch>=1.6.5",
+  "tiktoken>=0.8.0",
+  "textstat>=0.7.4",
   "datasets>=3.0.0",
   "numpy>=1.26.0",
 ]

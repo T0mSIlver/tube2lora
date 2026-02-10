@@ -56,11 +56,24 @@ class NormalizeConfig(StrictModel):
     model: str
     temperature: float = 0.1
     max_tokens: int = 4096
+    chunk_target_chars: int = 3500
+    chunk_overlap_chars: int = 0
+    chunk_hard_max_chars: int = 5500
 
     @field_validator("prompt_template", mode="before")
     @classmethod
     def _coerce_prompt_template(cls, value: Path | str) -> Path:
         return Path(value)
+
+    @model_validator(mode="after")
+    def _validate_chunking(self) -> "NormalizeConfig":
+        if self.chunk_target_chars < 200:
+            raise ValueError("normalize.chunk_target_chars must be >= 200")
+        if self.chunk_overlap_chars < 0:
+            raise ValueError("normalize.chunk_overlap_chars must be >= 0")
+        if self.chunk_hard_max_chars < self.chunk_target_chars:
+            raise ValueError("normalize.chunk_hard_max_chars must be >= normalize.chunk_target_chars")
+        return self
 
 
 class AnalyzeConfig(StrictModel):
@@ -71,9 +84,55 @@ class AnalyzeConfig(StrictModel):
 class FilterConfig(StrictModel):
     enabled: bool = True
     min_words: int = 100
+    min_tokens: int = 120
     language_allowlist: list[str] = Field(default_factory=lambda: ["en"])
     dedup_threshold: float = 0.85
     min_quality_score: float = 0.2
+    normalize_min_token_ratio: float | None = 0.7
+    normalize_max_token_ratio: float | None = 1.35
+    normalize_min_length_ratio: float | None = 0.7
+    normalize_max_length_ratio: float | None = 1.35
+    normalize_min_similarity: float | None = 0.65
+
+    @model_validator(mode="after")
+    def _validate_thresholds(self) -> "FilterConfig":
+        if self.min_words < 0:
+            raise ValueError("filter.min_words must be >= 0")
+        if self.min_tokens < 0:
+            raise ValueError("filter.min_tokens must be >= 0")
+        if self.dedup_threshold < 0 or self.dedup_threshold > 1:
+            raise ValueError("filter.dedup_threshold must be between 0 and 1")
+        if self.min_quality_score < 0 or self.min_quality_score > 1:
+            raise ValueError("filter.min_quality_score must be between 0 and 1")
+        if self.normalize_min_token_ratio is not None and self.normalize_min_token_ratio <= 0:
+            raise ValueError("filter.normalize_min_token_ratio must be > 0 when set")
+        if self.normalize_max_token_ratio is not None and self.normalize_max_token_ratio <= 0:
+            raise ValueError("filter.normalize_max_token_ratio must be > 0 when set")
+        if (
+            self.normalize_min_token_ratio is not None
+            and self.normalize_max_token_ratio is not None
+            and self.normalize_max_token_ratio < self.normalize_min_token_ratio
+        ):
+            raise ValueError(
+                "filter.normalize_max_token_ratio must be >= filter.normalize_min_token_ratio"
+            )
+        if self.normalize_min_length_ratio is not None and self.normalize_min_length_ratio <= 0:
+            raise ValueError("filter.normalize_min_length_ratio must be > 0 when set")
+        if self.normalize_max_length_ratio is not None and self.normalize_max_length_ratio <= 0:
+            raise ValueError("filter.normalize_max_length_ratio must be > 0 when set")
+        if (
+            self.normalize_min_length_ratio is not None
+            and self.normalize_max_length_ratio is not None
+            and self.normalize_max_length_ratio < self.normalize_min_length_ratio
+        ):
+            raise ValueError(
+                "filter.normalize_max_length_ratio must be >= filter.normalize_min_length_ratio"
+            )
+        if self.normalize_min_similarity is not None and (
+            self.normalize_min_similarity < 0 or self.normalize_min_similarity > 1
+        ):
+            raise ValueError("filter.normalize_min_similarity must be between 0 and 1 when set")
+        return self
 
 
 class GenerateConfig(StrictModel):

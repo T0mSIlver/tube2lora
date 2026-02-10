@@ -12,6 +12,16 @@ from tube2lora.llm.client import ChatRequest, OpenAIChatClient
 from tube2lora.stages.common import StageReport
 from tube2lora.utils.hashing import sha256_file, stable_dict_hash
 from tube2lora.utils.io import iter_jsonl, write_jsonl
+from tube2lora.utils.text_metrics import (
+    count_sentences,
+    count_tokens,
+    count_words,
+    lexical_metrics,
+    readability_metrics,
+    safe_ratio,
+)
+
+GENERATE_SCHEMA_VERSION = "v2"
 
 
 def _clean_closing_sentence(raw: str) -> str:
@@ -176,6 +186,29 @@ def _semantic_chunks(
     return chunks
 
 
+def _extract_metrics_from_row(row: dict[str, object]) -> dict[str, object]:
+    metrics = row.get("metrics")
+    if isinstance(metrics, dict):
+        return metrics
+
+    status = str(row.get("status", "unknown"))
+    if status == "ready":
+        return {
+            "num_entries": int(row.get("num_entries", 0)),
+        }
+    if status == "skipped":
+        return {"skip_reason": row.get("skip_reason", "unknown")}
+    if status == "failed":
+        return {"error": row.get("error", "unknown")}
+    return {}
+
+
+def _mean(values: list[int]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / float(len(values))
+
+
 def run(context: RunContext, logger: logging.Logger) -> StageReport:
     stage_name = "generate"
     context.update_stage_status(stage_name, "running")
@@ -210,11 +243,14 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
     per_video_dir = stage_dir / "videos"
     per_video_dir.mkdir(parents=True, exist_ok=True)
     output_manifest_path = stage_dir / "dataset_messages.jsonl"
+    output_rows_path = stage_dir / "videos.jsonl"
+    metrics_manifest_path = stage_dir / "metrics.jsonl"
     manifest = ManifestStore(context.stage_manifest_path(stage_name))
 
     client = OpenAIChatClient(context.config.llm)
 
     all_entries: list[dict[str, object]] = []
+    output_rows: list[dict[str, object]] = []
     success = 0
     failed = 0
     skipped = 0
@@ -226,6 +262,7 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
 
         input_hash = stable_dict_hash(
             {
+                "schema": GENERATE_SCHEMA_VERSION,
                 "video_id": video_id,
                 "text_sha256": sha256_file(text_path),
                 "generate_cfg": context.config.generate.model_dump(mode="json"),
@@ -235,9 +272,11 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
 
         if manifest.should_skip(video_id, input_hash):
             cached_output = manifest.items[video_id].get("output")
-            if isinstance(cached_output, dict) and "entries_path" in cached_output:
-                entries_path = Path(str(cached_output["entries_path"]))
-                all_entries.extend(iter_jsonl(entries_path))
+            if isinstance(cached_output, dict):
+                if "entries_path" in cached_output:
+                    entries_path = Path(str(cached_output["entries_path"]))
+                    all_entries.extend(iter_jsonl(entries_path))
+                output_rows.append(cached_output)
             skipped += 1
             continue
 
@@ -246,9 +285,14 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
             if not transcript_text:
                 out_row = {
                     "video_id": video_id,
+                    "title": title,
                     "status": "skipped",
                     "skip_reason": "empty_normalized_text",
+                    "metrics": {
+                        "skip_reason": "empty_normalized_text",
+                    },
                 }
+                output_rows.append(out_row)
                 manifest.mark(
                     video_id,
                     status="skipped",
@@ -276,6 +320,14 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
             )
 
             video_entries: list[dict[str, object]] = []
+            assistant_token_counts: list[int] = []
+            user_token_counts: list[int] = []
+            facts_token_counts: list[int] = []
+            chunk_token_counts: list[int] = []
+            system_token_count = count_tokens(
+                prompt_template.system_message.strip(),
+                model=context.config.generate.model,
+            )
             for chunk_idx, chunk in enumerate(chunks):
                 facts_prompt = prompt_template.fact_extraction_prompt.format(
                     chunk=chunk,
@@ -299,6 +351,16 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                     chunk_index=chunk_idx,
                 )
 
+                chunk_tokens = count_tokens(chunk, model=context.config.generate.model)
+                assistant_tokens = chunk_tokens
+                user_tokens = count_tokens(user_message, model=context.config.generate.model)
+                facts_tokens = count_tokens(facts, model=context.config.generate.model)
+
+                assistant_token_counts.append(assistant_tokens)
+                user_token_counts.append(user_tokens)
+                facts_token_counts.append(facts_tokens)
+                chunk_token_counts.append(chunk_tokens)
+
                 messages: list[dict[str, str]] = []
                 if prompt_template.system_message.strip():
                     messages.append(
@@ -317,7 +379,12 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                         "title": title,
                         "chunk_index": chunk_idx,
                         "source_len": len(chunk),
+                        "source_token_count": chunk_tokens,
                         "facts": facts,
+                        "facts_token_count": facts_tokens,
+                        "user_token_count": user_tokens,
+                        "assistant_token_count": assistant_tokens,
+                        "system_token_count": system_token_count,
                     },
                 }
                 video_entries.append(entry)
@@ -326,25 +393,83 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
             write_jsonl(video_entries_path, video_entries)
             all_entries.extend(video_entries)
 
+            source_token_count = count_tokens(transcript_text, model=context.config.generate.model)
+            source_lexical = lexical_metrics(transcript_text)
+            source_readability = readability_metrics(transcript_text)
+            source_word_count = count_words(transcript_text)
+            source_sentence_count = count_sentences(transcript_text)
+            total_assistant_tokens = sum(assistant_token_counts)
+            total_user_tokens = sum(user_token_counts)
+            total_facts_tokens = sum(facts_token_counts)
+
             out_row = {
                 "video_id": video_id,
+                "title": title,
                 "status": "ready",
                 "entries_path": str(video_entries_path),
                 "num_entries": len(video_entries),
+                "metrics": {
+                    "num_entries": len(video_entries),
+                    "num_source_chunks": len(chunks),
+                    "source_num_chars": len(transcript_text),
+                    "source_word_count": source_word_count,
+                    "source_token_count": source_token_count,
+                    "source_sentence_count": source_sentence_count,
+                    "source_unique_ratio": source_lexical["unique_ratio"],
+                    "source_hapax_ratio": source_lexical["hapax_ratio"],
+                    "source_long_word_ratio": source_lexical["long_word_ratio"],
+                    "source_flesch_reading_ease": source_readability["flesch_reading_ease"],
+                    "source_automated_readability_index": source_readability[
+                        "automated_readability_index"
+                    ],
+                    "source_gunning_fog": source_readability["gunning_fog"],
+                    "assistant_token_total": total_assistant_tokens,
+                    "assistant_token_avg": _mean(assistant_token_counts),
+                    "assistant_token_max": max(assistant_token_counts) if assistant_token_counts else 0,
+                    "user_token_total": total_user_tokens,
+                    "user_token_avg": _mean(user_token_counts),
+                    "facts_token_total": total_facts_tokens,
+                    "facts_token_avg": _mean(facts_token_counts),
+                    "source_chunk_token_avg": _mean(chunk_token_counts),
+                    "assistant_to_source_token_ratio": safe_ratio(
+                        total_assistant_tokens,
+                        source_token_count,
+                    ),
+                },
             }
+            output_rows.append(out_row)
             manifest.mark(video_id, status="success", input_hash=input_hash, output=out_row)
             success += 1
         except Exception as exc:
             logger.exception("Generate failed for %s (%s)", video_id, title)
             out_row = {
                 "video_id": video_id,
+                "title": title,
                 "status": "failed",
                 "error": str(exc),
+                "metrics": {
+                    "error": str(exc),
+                },
             }
+            output_rows.append(out_row)
             manifest.mark(video_id, status="failed", input_hash=input_hash, output=out_row, error=str(exc))
             failed += 1
 
     write_jsonl(output_manifest_path, all_entries)
+    output_rows.sort(key=lambda item: str(item.get("video_id", "")))
+    write_jsonl(output_rows_path, output_rows)
+    write_jsonl(
+        metrics_manifest_path,
+        [
+            {
+                "video_id": row.get("video_id"),
+                "title": row.get("title"),
+                "status": row.get("status"),
+                "metrics": _extract_metrics_from_row(row),
+            }
+            for row in output_rows
+        ],
+    )
 
     report = StageReport(
         stage=stage_name,
@@ -365,6 +490,8 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 "skipped": report.skipped,
             },
             "output_path": str(output_manifest_path),
+            "videos_path": str(output_rows_path),
+            "metrics_path": str(metrics_manifest_path),
         },
     )
     return report

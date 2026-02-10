@@ -5,7 +5,7 @@ system_prompt: |
   Your job is to fix transcription artifacts and formatting only.
 
 user_prompt_template: |
-  Clean the following transcript.
+  Clean the following transcript chunk.
 
   Rules:
   - Preserve original wording, tone, and factual content.
@@ -13,7 +13,13 @@ user_prompt_template: |
   - Remove duplicated glitchy repetitions.
   - Add sensible paragraph breaks and punctuation.
   - Do not summarize, paraphrase, or add new content.
-  - Return only the cleaned transcript text.
+  - Return ONLY the cleaned transcript chunk between the exact separators below.
+  - Do not include any heading, explanation, markdown separators, or notes.
+
+  Required output format (exact separators):
+  <<<NORMALIZED_TRANSCRIPT_START>>>
+  <cleaned transcript chunk>
+  <<<NORMALIZED_TRANSCRIPT_END>>>
 
   Video Title: {title}
   Video ID: {video_id}
