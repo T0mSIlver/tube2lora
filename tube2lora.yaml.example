@@ -49,7 +49,6 @@ transcribe:
   # Transcription backend implementation.
   # Allowed values:
   # - faster_whisper: local Faster-Whisper inference
-  # - voxtral: local Voxtral/transformers backend
   # - youtube_native: only use YouTube native transcripts
   backend: faster_whisper
 
@@ -58,7 +57,7 @@ transcribe:
   prefer_manual_transcript: true
 
   # Allow YouTube auto-generated transcripts as fallback.
-  # Default false because quality is typically below Whisper/Voxtral.
+  # Default false because quality is typically below manual transcripts or Whisper.
   allow_auto_generated: false
 
   # Keep only transcript languages in this list.
@@ -88,24 +87,6 @@ transcribe:
     # Voice activity detection filtering.
     # True removes silence segments and usually improves transcript quality.
     vad_filter: true
-
-  voxtral:
-    # HF model name for Voxtral ASR backend.
-    model_name: "mistralai/Voxtral-Mini-4B-Realtime-2602"
-
-    # Device selection for transformers pipeline.
-    # Allowed values: auto, cpu, cuda
-    device: auto
-
-    # Torch dtype.
-    # Allowed values: auto, float16, bfloat16, float32
-    torch_dtype: auto
-
-    # Audio chunk size in seconds for pipeline streaming/chunking.
-    chunk_length_s: 30
-
-    # Batch size for chunk inference.
-    batch_size: 4
 
 llm:
   # Base URL for OpenAI-compatible chat endpoint.

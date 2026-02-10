@@ -19,7 +19,7 @@ download:
   yt_dlp_video_format: "bestvideo+bestaudio/best"
 
 transcribe:
-  # faster_whisper | voxtral | youtube_native
+  # faster_whisper | youtube_native
   backend: faster_whisper
 
   # Prefer creator-provided manual transcripts when available.
@@ -36,13 +36,6 @@ transcribe:
     compute_type: auto
     beam_size: 5
     vad_filter: true
-
-  voxtral:
-    model_name: "mistralai/Voxtral-Mini-4B-Realtime-2602"
-    device: auto
-    torch_dtype: auto
-    chunk_length_s: 30
-    batch_size: 4
 
 # OpenAI-compatible endpoint for LLM tasks only (normalize + generate).
 llm:

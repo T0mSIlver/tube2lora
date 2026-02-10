@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from tube2lora.config import FasterWhisperConfig, VoxtralConfig
+from tube2lora.config import FasterWhisperConfig
 
 
 @dataclass(slots=True)
@@ -194,74 +194,3 @@ class FasterWhisperTranscriber:
             language=str(getattr(info, "language", "")) or None,
             segments=segments,
         )
-
-
-class VoxtralTranscriber:
-    def __init__(self, cfg: VoxtralConfig, logger: logging.Logger):
-        self.cfg = cfg
-        self.logger = logger
-        self._pipeline = None
-
-    def _ensure_pipeline(self):
-        if self._pipeline is not None:
-            return
-
-        try:
-            import torch
-            from transformers import pipeline
-        except ImportError as exc:
-            raise RuntimeError(
-                "transformers+torch are required for voxtral backend"
-            ) from exc
-
-        device = -1
-        if self.cfg.device == "cuda":
-            device = 0
-        elif self.cfg.device == "auto" and torch.cuda.is_available():
-            device = 0
-
-        torch_dtype = None
-        if self.cfg.torch_dtype == "float16":
-            torch_dtype = torch.float16
-        elif self.cfg.torch_dtype == "bfloat16":
-            torch_dtype = torch.bfloat16
-        elif self.cfg.torch_dtype == "float32":
-            torch_dtype = torch.float32
-
-        self.logger.info("Loading Voxtral ASR pipeline (%s)", self.cfg.model_name)
-        self._pipeline = pipeline(
-            task="automatic-speech-recognition",
-            model=self.cfg.model_name,
-            device=device,
-            torch_dtype=torch_dtype,
-        )
-
-    def transcribe(self, audio_path: Path) -> TranscriptionResult:
-        self._ensure_pipeline()
-        if self._pipeline is None:  # pragma: no cover
-            raise RuntimeError("Voxtral pipeline was not initialized")
-
-        output = self._pipeline(
-            str(audio_path),
-            return_timestamps=True,
-            chunk_length_s=self.cfg.chunk_length_s,
-            batch_size=self.cfg.batch_size,
-        )
-
-        segments: list[TranscriptSegment] = []
-        chunks = output.get("chunks") if isinstance(output, dict) else None
-        if isinstance(chunks, list) and chunks:
-            for chunk in chunks:
-                text = str(chunk.get("text", "")).strip()
-                if not text:
-                    continue
-                timestamp = chunk.get("timestamp") or (0.0, 0.0)
-                start = float(timestamp[0] or 0.0)
-                end = float(timestamp[1] or start)
-                segments.append(TranscriptSegment(start=start, end=end, text=text))
-        else:
-            text = str(output.get("text", "")).strip() if isinstance(output, dict) else str(output)
-            if text:
-                segments.append(TranscriptSegment(start=0.0, end=0.0, text=text))
-
-        return TranscriptionResult(source="voxtral", language=None, segments=segments)

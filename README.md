@@ -21,8 +21,8 @@ It is designed for resumability, per-stage caching, and reproducible per-run art
 - OpenAI-compatible LLM client for normalization + dataset generation
 - Transcriber protocol with backends:
   - `faster_whisper`
-  - `voxtral` (direct Python/transformers backend)
   - `youtube_native`
+- Voxtral is currently sidelined and planned through vLLM realtime API integration
 - Video-level train/eval split (prevents chunk leakage)
 - TensorBoard logging in training stage
 

@@ -13,7 +13,6 @@ from tube2lora.transcribe.backends import (
     FasterWhisperTranscriber,
     TranscriptionResult,
     Transcriber,
-    VoxtralTranscriber,
     fetch_youtube_transcript,
 )
 from tube2lora.utils.hashing import sha256_file, stable_dict_hash
@@ -24,8 +23,6 @@ def _select_backend(context: RunContext, logger: logging.Logger) -> Transcriber 
     backend = context.config.transcribe.backend
     if backend == "faster_whisper":
         return FasterWhisperTranscriber(context.config.transcribe.faster_whisper, logger)
-    if backend == "voxtral":
-        return VoxtralTranscriber(context.config.transcribe.voxtral, logger)
     if backend == "youtube_native":
         return None
     raise ValueError(f"Unsupported transcribe backend: {backend}")

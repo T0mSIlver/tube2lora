@@ -35,21 +35,12 @@ class FasterWhisperConfig(StrictModel):
     vad_filter: bool = True
 
 
-class VoxtralConfig(StrictModel):
-    model_name: str = "mistralai/Voxtral-Mini-4B-Realtime-2602"
-    device: Literal["auto", "cpu", "cuda"] = "auto"
-    torch_dtype: Literal["auto", "float16", "bfloat16", "float32"] = "auto"
-    chunk_length_s: int = 30
-    batch_size: int = 4
-
-
 class TranscribeConfig(StrictModel):
-    backend: Literal["faster_whisper", "voxtral", "youtube_native"] = "faster_whisper"
+    backend: Literal["faster_whisper", "youtube_native"] = "faster_whisper"
     prefer_manual_transcript: bool = True
     allow_auto_generated: bool = False
     language_allowlist: list[str] = Field(default_factory=lambda: ["en"])
     faster_whisper: FasterWhisperConfig = Field(default_factory=FasterWhisperConfig)
-    voxtral: VoxtralConfig = Field(default_factory=VoxtralConfig)
 
 
 class LLMEndpointConfig(StrictModel):
