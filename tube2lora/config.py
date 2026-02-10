@@ -135,21 +135,127 @@ class FilterConfig(StrictModel):
         return self
 
 
-class GenerateConfig(StrictModel):
-    enabled: bool = True
+class TalkAsCreatorConfig(StrictModel):
     prompt_template: Path
-    model: str
-    temperature: float = 0.1
-    max_tokens: int = 4096
-    buffer_chars: int = 7000
-    fallback_min_chars: int = 2500
-    fallback_max_chars: int = 3500
-    min_tail_chars: int = 800
+    turn_pairs: int = 3
+    clarifying_question_probability: float = 0.4
+    target_tokens_per_assistant_turn: int = 140
+    min_source_tokens: int = 120
+    max_copy_similarity: float = 0.8
+    min_novel_token_ratio: float = 0.18
 
     @field_validator("prompt_template", mode="before")
     @classmethod
     def _coerce_prompt_template(cls, value: Path | str) -> Path:
         return Path(value)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "TalkAsCreatorConfig":
+        if self.turn_pairs < 1:
+            raise ValueError("generate.talk_as_creator.turn_pairs must be >= 1")
+        if self.target_tokens_per_assistant_turn < 32:
+            raise ValueError(
+                "generate.talk_as_creator.target_tokens_per_assistant_turn must be >= 32"
+            )
+        if self.min_source_tokens < 0:
+            raise ValueError("generate.talk_as_creator.min_source_tokens must be >= 0")
+        if not 0 <= self.clarifying_question_probability <= 1:
+            raise ValueError(
+                "generate.talk_as_creator.clarifying_question_probability must be between 0 and 1"
+            )
+        if not 0 <= self.max_copy_similarity <= 1:
+            raise ValueError("generate.talk_as_creator.max_copy_similarity must be between 0 and 1")
+        if not 0 <= self.min_novel_token_ratio <= 1:
+            raise ValueError(
+                "generate.talk_as_creator.min_novel_token_ratio must be between 0 and 1"
+            )
+        return self
+
+
+class EditorialRewriteConfig(StrictModel):
+    prompt_template: Path
+    briefs: list[
+        Literal[
+            "cleanup_filler",
+            "tighten_60_percent",
+            "expand_with_examples",
+            "convert_to_script",
+        ]
+    ] = Field(
+        default_factory=lambda: [
+            "cleanup_filler",
+            "tighten_60_percent",
+            "expand_with_examples",
+            "convert_to_script",
+        ]
+    )
+    use_normalized_input: bool = True
+    examples_per_chunk: int = 1
+    min_source_tokens: int = 120
+    cleanup_min_similarity: float = 0.45
+    cleanup_max_similarity: float = 0.995
+    tighten_target_ratio: float = 0.6
+    tighten_ratio_tolerance: float = 0.25
+    expand_min_ratio: float = 1.05
+    expand_max_ratio: float = 2.6
+    max_new_named_entities: int = 10
+
+    @field_validator("prompt_template", mode="before")
+    @classmethod
+    def _coerce_prompt_template(cls, value: Path | str) -> Path:
+        return Path(value)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "EditorialRewriteConfig":
+        if not self.briefs:
+            raise ValueError("generate.editorial_rewrite.briefs must contain at least one brief")
+        if self.examples_per_chunk < 1:
+            raise ValueError("generate.editorial_rewrite.examples_per_chunk must be >= 1")
+        if self.min_source_tokens < 0:
+            raise ValueError("generate.editorial_rewrite.min_source_tokens must be >= 0")
+        if not 0 <= self.cleanup_min_similarity <= 1:
+            raise ValueError(
+                "generate.editorial_rewrite.cleanup_min_similarity must be between 0 and 1"
+            )
+        if not 0 <= self.cleanup_max_similarity <= 1:
+            raise ValueError(
+                "generate.editorial_rewrite.cleanup_max_similarity must be between 0 and 1"
+            )
+        if self.cleanup_max_similarity < self.cleanup_min_similarity:
+            raise ValueError(
+                "generate.editorial_rewrite.cleanup_max_similarity must be >= cleanup_min_similarity"
+            )
+        if self.tighten_target_ratio <= 0:
+            raise ValueError("generate.editorial_rewrite.tighten_target_ratio must be > 0")
+        if self.tighten_ratio_tolerance <= 0:
+            raise ValueError("generate.editorial_rewrite.tighten_ratio_tolerance must be > 0")
+        if self.expand_min_ratio <= 0:
+            raise ValueError("generate.editorial_rewrite.expand_min_ratio must be > 0")
+        if self.expand_max_ratio < self.expand_min_ratio:
+            raise ValueError(
+                "generate.editorial_rewrite.expand_max_ratio must be >= expand_min_ratio"
+            )
+        if self.max_new_named_entities < 0:
+            raise ValueError("generate.editorial_rewrite.max_new_named_entities must be >= 0")
+        return self
+
+
+class GenerateConfig(StrictModel):
+    enabled: bool = True
+    generators: list[Literal["talk_as_creator", "editorial_rewrite"]] = Field(
+        default_factory=lambda: ["talk_as_creator"]
+    )
+    model: str
+    temperature: float = 0.1
+    max_tokens: int = 4096
+    talk_as_creator: TalkAsCreatorConfig
+    editorial_rewrite: EditorialRewriteConfig
+
+    @model_validator(mode="after")
+    def _validate(self) -> "GenerateConfig":
+        if not self.generators:
+            raise ValueError("generate.generators must contain at least one generator")
+        return self
 
 
 class TrainConfig(StrictModel):
@@ -227,15 +333,19 @@ class AppConfig(StrictModel):
         return self
 
 
-class PromptTemplate(StrictModel):
-    name: str
-    system_message: str = ""
-    user_message_template: str
-    fact_extraction_prompt: str
-    semantic_boundary_prompt: str
-
-
 class NormalizePromptTemplate(StrictModel):
+    name: str
+    system_prompt: str
+    user_prompt_template: str
+
+
+class TalkAsCreatorPromptTemplate(StrictModel):
+    name: str
+    system_prompt: str
+    user_prompt_template: str
+
+
+class EditorialRewritePromptTemplate(StrictModel):
     name: str
     system_prompt: str
     user_prompt_template: str
@@ -274,7 +384,22 @@ def load_config(config_path: str | Path) -> AppConfig:
             ),
             "generate": cfg.generate.model_copy(
                 update={
-                    "prompt_template": _resolve_path(base_dir, cfg.generate.prompt_template)
+                    "talk_as_creator": cfg.generate.talk_as_creator.model_copy(
+                        update={
+                            "prompt_template": _resolve_path(
+                                base_dir,
+                                cfg.generate.talk_as_creator.prompt_template,
+                            )
+                        }
+                    ),
+                    "editorial_rewrite": cfg.generate.editorial_rewrite.model_copy(
+                        update={
+                            "prompt_template": _resolve_path(
+                                base_dir,
+                                cfg.generate.editorial_rewrite.prompt_template,
+                            )
+                        }
+                    ),
                 }
             ),
         }
@@ -292,25 +417,32 @@ def load_config(config_path: str | Path) -> AppConfig:
     return updated
 
 
-def load_prompt_template(path: Path) -> PromptTemplate:
-    payload = load_yaml(path)
-    return PromptTemplate.model_validate(payload)
-
-
 def load_normalize_prompt_template(path: Path) -> NormalizePromptTemplate:
     payload = load_yaml(path)
     return NormalizePromptTemplate.model_validate(payload)
 
 
+def load_talk_as_creator_prompt_template(path: Path) -> TalkAsCreatorPromptTemplate:
+    payload = load_yaml(path)
+    return TalkAsCreatorPromptTemplate.model_validate(payload)
+
+
+def load_editorial_rewrite_prompt_template(path: Path) -> EditorialRewritePromptTemplate:
+    payload = load_yaml(path)
+    return EditorialRewritePromptTemplate.model_validate(payload)
+
+
 def compute_config_hash(config: AppConfig) -> str:
     config_file_bytes = config.config_path.read_bytes()
     normalize_prompt_bytes = config.normalize.prompt_template.read_bytes()
-    generate_prompt_bytes = config.generate.prompt_template.read_bytes()
+    talk_generate_prompt_bytes = config.generate.talk_as_creator.prompt_template.read_bytes()
+    editorial_generate_prompt_bytes = config.generate.editorial_rewrite.prompt_template.read_bytes()
 
     payload: dict[str, Any] = {
         "config_file_sha256": sha256_bytes(config_file_bytes),
         "normalize_prompt_sha256": sha256_bytes(normalize_prompt_bytes),
-        "generate_prompt_sha256": sha256_bytes(generate_prompt_bytes),
+        "talk_generate_prompt_sha256": sha256_bytes(talk_generate_prompt_bytes),
+        "editorial_generate_prompt_sha256": sha256_bytes(editorial_generate_prompt_bytes),
         "resolved_config": config.model_dump(mode="json", exclude={"config_path"}),
     }
 

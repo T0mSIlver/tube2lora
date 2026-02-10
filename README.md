@@ -23,7 +23,8 @@ It is designed for resumability, per-stage caching, and reproducible per-run art
 - Per-stage metrics emission (`stages/<stage>/metrics.jsonl`)
 - Unified per-video analysis profile (`stages/analyze/profiles.jsonl`) used by `filter`
 - Token-aware NLP metrics (`tiktoken` + readability/lexical features)
-- Generate-stage dataset quality metrics (per-message token accounting)
+- Generate-stage quality gates and metrics for chat + editorial datasets
+- Editorial candidate caching + gate-only re-evaluation (threshold changes can avoid LLM re-calls)
 - Transcriber protocol with backends:
   - `faster_whisper`
   - `youtube_native`
@@ -76,15 +77,23 @@ uv run tube2lora status --config my_config.yaml
 Each run has:
 
 - `run.json` stage status + metadata
+- `manifest.json` dataset generation manifest (generator outputs + counts)
 - `logs/pipeline.log`
 - `manifests/<stage>.json` item-level cache/resume records
 - `stages/<stage>/...` stage outputs
+- `talk_as_creator/...` chat SFT dataset artifacts (when enabled)
+- `editorial_rewrite/...` edit dataset artifacts (when enabled)
 - `artifacts/<stage>/...` heavy artifacts (media, models, logs)
 
 ## Config and Prompt Templates
 
 - Default config: `configs/default.yaml`
 - Normalize prompt template: `configs/prompts/normalize_default.yaml`
-- Dataset task prompt template: `configs/prompts/video_essay_example.yaml`
+- Talk-as-creator prompt template: `configs/prompts/talk_as_creator_default.yaml`
+- Editorial rewrite prompt template: `configs/prompts/editorial_rewrite_default.yaml`
 
-The generation prompt template is mandatory and controls task-specific SFT message creation.
+`generate` supports multiple generators in one run. Default is `talk_as_creator` only.
+`train` v1 consumes only `talk_as_creator/dataset_messages.jsonl`.
+
+Editorial rewrite emits candidate decisions (`accepted` / `rejected`) and can re-apply
+thresholds from cached candidates when only gate settings change.

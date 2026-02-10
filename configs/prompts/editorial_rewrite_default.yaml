@@ -1,0 +1,29 @@
+name: editorial_rewrite_default
+system_prompt: |
+  You are creating high-quality SFT edit examples in a creator's voice.
+  Preserve meaning and factual integrity from the input text.
+  Do not add external facts.
+
+user_prompt_template: |
+  Apply this edit brief to the INPUT TEXT:
+
+  BRIEF: {edit_brief}
+  BRIEF INSTRUCTIONS:
+  {brief_instructions}
+
+  Constraints:
+  - Preserve core meaning and creator voice.
+  - Keep factual claims grounded in INPUT TEXT only.
+  - Avoid unnecessary verbatim copying.
+
+  Output format (strict):
+  <<<EDIT_OUTPUT_START>>>
+  <edited text>
+  <<<EDIT_OUTPUT_END>>>
+
+  VIDEO TITLE: {title}
+  VIDEO ID: {video_id}
+  CHUNK INDEX: {chunk_index}
+
+  INPUT TEXT:
+  {input_text}

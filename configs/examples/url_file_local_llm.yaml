@@ -57,14 +57,35 @@ filter:
 
 generate:
   enabled: true
-  prompt_template: "../prompts/video_essay_example.yaml"
+  generators: ["talk_as_creator"]
   model: "mistralai/Ministral-3-14B-Instruct-2512"
   temperature: 0.1
   max_tokens: 4096
-  buffer_chars: 7000
-  fallback_min_chars: 2500
-  fallback_max_chars: 3500
-  min_tail_chars: 800
+  talk_as_creator:
+    prompt_template: "../prompts/talk_as_creator_default.yaml"
+    turn_pairs: 3
+    clarifying_question_probability: 0.4
+    target_tokens_per_assistant_turn: 140
+    min_source_tokens: 120
+    max_copy_similarity: 0.8
+    min_novel_token_ratio: 0.18
+  editorial_rewrite:
+    prompt_template: "../prompts/editorial_rewrite_default.yaml"
+    briefs:
+      - "cleanup_filler"
+      - "tighten_60_percent"
+      - "expand_with_examples"
+      - "convert_to_script"
+    use_normalized_input: true
+    examples_per_chunk: 1
+    min_source_tokens: 120
+    cleanup_min_similarity: 0.45
+    cleanup_max_similarity: 0.995
+    tighten_target_ratio: 0.6
+    tighten_ratio_tolerance: 0.25
+    expand_min_ratio: 1.05
+    expand_max_ratio: 2.6
+    max_new_named_entities: 10
 
 train:
   enabled: true

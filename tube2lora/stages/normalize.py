@@ -12,7 +12,7 @@ from tube2lora.cache.manager import ManifestStore, RunContext
 from tube2lora.config import load_normalize_prompt_template
 from tube2lora.llm.client import ChatRequest, OpenAIChatClient
 from tube2lora.stages.common import StageReport
-from tube2lora.utils.hashing import sha256_file, stable_dict_hash
+from tube2lora.utils.hashing import sha256_bytes, sha256_file, stable_dict_hash
 from tube2lora.utils.io import atomic_write_json, atomic_write_text, iter_jsonl, write_jsonl
 from tube2lora.utils.text_metrics import (
     char_similarity,
@@ -33,7 +33,7 @@ NORMALIZE_BANNED_PHRASES = (
     "---",
     "note:",
 )
-NORMALIZE_SCHEMA_VERSION = "v2"
+NORMALIZE_SCHEMA_VERSION = "v3"
 
 
 @dataclass(slots=True)
@@ -372,6 +372,8 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
 
             normalized_chunks: list[str] = []
             chunk_rows: list[dict[str, object]] = []
+            chunk_dir = stage_dir / "chunks" / video_id
+            chunk_dir.mkdir(parents=True, exist_ok=True)
             for chunk in chunks:
                 user_prompt = prompt_template.user_prompt_template.format(
                     transcript=chunk.text,
@@ -395,6 +397,10 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                 _validate_normalized_chunk_text(normalized_chunk)
 
                 normalized_chunks.append(normalized_chunk)
+                source_excerpt_path = chunk_dir / f"chunk_{chunk.chunk_index:04d}_source.txt"
+                normalized_excerpt_path = chunk_dir / f"chunk_{chunk.chunk_index:04d}_normalized.txt"
+                atomic_write_text(source_excerpt_path, chunk.text + "\n")
+                atomic_write_text(normalized_excerpt_path, normalized_chunk + "\n")
                 chunk_rows.append(
                     {
                         "chunk_index": chunk.chunk_index,
@@ -404,6 +410,12 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
                         "end_time": chunk.end_time,
                         "source_num_chars": len(chunk.text),
                         "normalized_num_chars": len(normalized_chunk),
+                        "source_excerpt_path": str(source_excerpt_path),
+                        "normalized_excerpt_path": str(normalized_excerpt_path),
+                        "source_excerpt_sha256": sha256_bytes(chunk.text.encode("utf-8")),
+                        "normalized_excerpt_sha256": sha256_bytes(
+                            normalized_chunk.encode("utf-8")
+                        ),
                         "source_token_count": count_tokens(
                             chunk.text,
                             model=context.config.normalize.model,

@@ -173,30 +173,81 @@ generate:
   # Whether to run dataset generation stage.
   enabled: true
 
-  # Path to YAML prompt template for generation.
-  # Path is resolved relative to this config file.
-  prompt_template: "configs/prompts/video_essay_example.yaml"
+  # Generator list to run in this stage.
+  # Default keeps cost lower while preserving the minimal train path.
+  # Add "editorial_rewrite" explicitly when needed.
+  generators: ["talk_as_creator"]
 
-  # LLM model used for semantic chunking + fact extraction.
+  # LLM model used by all enabled generators.
   model: "mistralai/Ministral-3-14B-Instruct-2512"
 
-  # Sampling temperature for generation helper calls.
+  # Sampling temperature for generator calls.
   temperature: 0.1
 
-  # Max completion tokens for generation helper calls.
+  # Max completion tokens per generator call.
   max_tokens: 4096
 
-  # Character window for semantic boundary scan.
-  buffer_chars: 7000
+  talk_as_creator:
+    # Prompt template for multi-turn creator-style chat generation.
+    prompt_template: "configs/prompts/talk_as_creator_default.yaml"
 
-  # Fallback chunking lower bound when semantic boundary fails.
-  fallback_min_chars: 2500
+    # Number of user/assistant turn pairs per generated chat example.
+    turn_pairs: 3
 
-  # Fallback chunking upper bound when semantic boundary fails.
-  fallback_max_chars: 3500
+    # Probability that a generated example should include clarifying behavior.
+    clarifying_question_probability: 0.4
 
-  # If remaining tail is below this size, include it as final chunk and stop.
-  min_tail_chars: 800
+    # Target assistant response length per turn.
+    target_tokens_per_assistant_turn: 140
+
+    # Skip too-short source chunks.
+    min_source_tokens: 120
+
+    # Quality gate: reject if output is too close to source chunk.
+    max_copy_similarity: 0.8
+
+    # Quality gate: reject if not enough lexical novelty vs source.
+    min_novel_token_ratio: 0.18
+
+  editorial_rewrite:
+    # Prompt template for single-turn editorial rewrite examples.
+    prompt_template: "configs/prompts/editorial_rewrite_default.yaml"
+
+    # Supported edit briefs (minimal v1 set).
+    briefs:
+      - "cleanup_filler"
+      - "tighten_60_percent"
+      - "expand_with_examples"
+      - "convert_to_script"
+
+    # Default input source for rewriting (normalized chunk text).
+    use_normalized_input: true
+
+    # Number of brief variants generated per source chunk.
+    examples_per_chunk: 1
+
+    # Skip too-short source chunks.
+    min_source_tokens: 120
+
+    # Cleanup gate bounds (relaxed defaults for better yield).
+    # Tighten these if you want stricter acceptance.
+    cleanup_min_similarity: 0.45
+    cleanup_max_similarity: 0.995
+
+    # Tighten brief target ratio and tolerance (by token count).
+    # Wider tolerance improves acceptance on weaker local models.
+    tighten_target_ratio: 0.6
+    tighten_ratio_tolerance: 0.25
+
+    # Expand brief ratio bounds (relaxed defaults).
+    expand_min_ratio: 1.05
+    expand_max_ratio: 2.6
+
+    # Expansion hallucination guardrail.
+    max_new_named_entities: 10
+
+    # Changing these editorial gate thresholds can re-apply acceptance decisions
+    # from cached editorial candidates when generation inputs are unchanged.
 
 train:
   # Whether to run training stage.

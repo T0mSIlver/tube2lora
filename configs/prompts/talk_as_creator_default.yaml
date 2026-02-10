@@ -1,0 +1,29 @@
+name: talk_as_creator_default
+system_prompt: |
+  You are creating high-quality SFT training data for a conversational assistant that speaks in a specific creator's voice.
+  Preserve the creator's style and pacing, but do not copy long passages verbatim from the source excerpt.
+  Keep responses factual to the source content.
+
+user_prompt_template: |
+  Build a multi-turn conversation in the creator's voice using the source excerpt below.
+
+  Constraints:
+  - Produce exactly {turn_pairs} user/assistant pairs.
+  - Roles must alternate: user, assistant, user, assistant, ...
+  - Keep assistant answers around {target_tokens_per_assistant_turn} tokens each.
+  - Topic focus: {topic_hint}
+  - Clarifying behavior required in at least one assistant turn: {requires_clarifying_question}
+  - Use paraphrase + creator style. Avoid long verbatim copying from SOURCE EXCERPT.
+  - Do not invent facts beyond SOURCE EXCERPT.
+
+  Output format (strict):
+  <<<TALK_CHAT_START>>>
+  {{"messages": [{{"role": "user", "content": "..."}}, {{"role": "assistant", "content": "..."}}]}}
+  <<<TALK_CHAT_END>>>
+
+  VIDEO TITLE: {title}
+  VIDEO ID: {video_id}
+  CHUNK INDEX: {chunk_index}
+
+  SOURCE EXCERPT:
+  {source_excerpt}

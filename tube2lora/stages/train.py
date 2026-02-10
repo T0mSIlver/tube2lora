@@ -79,9 +79,11 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
         )
         return report
 
-    dataset_path = context.stage_dir("generate") / "dataset_messages.jsonl"
+    dataset_path = context.root / "talk_as_creator" / "dataset_messages.jsonl"
     if not dataset_path.exists():
-        raise FileNotFoundError("Generate stage output not found.")
+        raise FileNotFoundError(
+            "Talk-as-creator dataset not found. Run generate with talk_as_creator enabled."
+        )
 
     stage_dir = context.stage_dir(stage_name)
     artifact_dir = context.stage_artifact_dir(stage_name)

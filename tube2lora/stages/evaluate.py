@@ -154,11 +154,13 @@ def run(context: RunContext, logger: logging.Logger) -> StageReport:
         return report
 
     metrics_path = context.stage_dir("train") / "training_metrics.json"
-    dataset_path = context.stage_dir("generate") / "dataset_messages.jsonl"
+    dataset_path = context.root / "talk_as_creator" / "dataset_messages.jsonl"
     if not metrics_path.exists():
         raise FileNotFoundError("Train stage output not found.")
     if not dataset_path.exists():
-        raise FileNotFoundError("Generate stage output not found.")
+        raise FileNotFoundError(
+            "Talk-as-creator dataset not found. Run generate with talk_as_creator enabled."
+        )
 
     stage_dir = context.stage_dir(stage_name)
     output_path = stage_dir / "evaluation.json"
